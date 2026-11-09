@@ -7,8 +7,10 @@
 // llama-3.3-70b-versatile → 404 — and only the model id changes).
 // FIX-18: every failure surfaces a distinct code (401 ≠ 404 ≠ 429 ≠ network).
 // FIX-2 (interim): if VITE_FORECAST_URL is set, requests go to that proxy
-// (e.g. a Supabase Edge Function) and the browser never attaches the key.
-// Once the proxy exists, move VITE_GROQ_API_KEY out of the client permanently.
+// (e.g. the Firebase Callable Function behind a raw-URL adapter) and the
+// browser never attaches the key. In Phase 1 the client switches to
+// httpsCallable(functions, 'forecast') instead; once deployed, move
+// VITE_GROQ_API_KEY off the client permanently.
 
 const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions'
 const DEFAULT_MODEL = 'openai/gpt-oss-120b'
