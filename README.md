@@ -118,7 +118,7 @@ Your stall profile saves permanently. Each forecast lets you make temporary adju
 | Styling | Tailwind CSS v4 + CSS Variables |
 | Auth | Firebase (signup / login / session) |
 | Routing | React Router v6 |
-| AI / LLM | Groq API — `llama-3.3-70b-versatile` |
+| AI / LLM | Groq API — `openai/gpt-oss-120b` (configurable via `VITE_GROQ_MODEL`) |
 | Weather | Open-Meteo API (free, no key required) |
 | Icons | Lucide React |
 | Storage | Firebase (auth) + localStorage (forecast history, session) |
@@ -135,8 +135,13 @@ File structure:
 
 ```
 src/
+	App.jsx
+	main.jsx
 	pages/
 		LandingPage.jsx
+		HomePage.jsx
+		LoginPage.jsx
+		SignupPage.jsx
 		ProfilePage.jsx
 		ForecastPage.jsx
 	components/
@@ -152,10 +157,15 @@ src/
 	utils/
 		groqAgent.js
 		weatherLogic.js
-		selectionStorage.js
+		userScope.js
+		profileStorage.js
+		forecastSessionStore.js
+		dateTime.js
+		firebase.js
 	data/
 		stalls.js
 		events.js
+		marketSeeds.js
 ```
 
 Data contracts:
@@ -210,17 +220,19 @@ ForecastResult = {
 
 **1. Clone the repository**
 ```bash
-git clone https://github.com/placeholder/bazaar-brain.git
-cd bazaar-brain
+git clone https://github.com/subrat-dwi/stall-brain.git
+cd stall-brain
 ```
 
-**2. Add your Groq API key**
+**2. Add your API keys**
 
-Create a `.env` file at the project root:
+Copy the environment template and fill in the values:
+```bash
+cp .env.example .env
 ```
-VITE_GROQ_API_KEY=your_groq_api_key_here
-```
-Get a free key at [console.groq.com](https://console.groq.com/) — no credit card needed.
+- **Firebase keys** (`VITE_FIREBASE_*`) — from Firebase console → Project settings → Your apps (powers signup / login)
+- **Groq key** (`VITE_GROQ_API_KEY`) — get a free key at [console.groq.com](https://console.groq.com/); the value starts with `gsk_`, no quotes
+- Optional: `VITE_GROQ_MODEL` overrides the AI model (`openai/gpt-oss-120b` by default — Groq occasionally retires model ids, and this keeps the swap to a config change, not a code hunt)
 
 **3. Install and run**
 ```bash

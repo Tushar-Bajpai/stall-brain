@@ -97,9 +97,56 @@ Goal: the existing app becomes correct and honest before anything is added.
   children on every App re-render.
 - README: fix clone URL, add `.env.example`, sync the file-tree section with reality.
 
+### 0.10 Config resilience (FIX-16..18) — added during implementation
+- **FIX-16:** `firebase.js` throws a descriptive error listing exactly which `VITE_FIREBASE_*`
+  values are missing, instead of the previous silent white screen.
+- **FIX-17:** the Groq model is configurable via `VITE_GROQ_MODEL` (default `openai/gpt-oss-120b`,
+  fallback `qwen/qwen3.8-27b` auto-retry on 404). Reason: Groq retired `llama-3.3-70b-versatile`
+  mid-2026 and every forecast 404'd while the app mislabeled it "Groq is unavailable" — the
+  outage must be a config edit, not a code hunt.
+- **FIX-18:** distinct failure surfacing — 401/403 (key rejected), 404/`model_not_found`,
+  429 (rate limit), and network failures each get their own message instead of a blanket
+  "Groq is unavailable".
+
 **Phase-0 done when:** a fresh user can run a forecast with zero Groq key in the bundle; events
 fire for at least one upcoming real date; feedback survives regenerate; history stores full
 results; `npm run build` + `npm run lint` pass.
+
+### Phase-0 status (2026-11-10) — implemented
+Done:
+- FIX-1: runtime event core (`date-holidays` India/UP + verified 2026 `marketSeeds.js`).
+  Note: `date-holidays` v3.39.1 `getHolidays(y,m,d)` **ignores the day arg** and returns the
+  whole year — the code fetch-guards per year and filters `entry.date.slice(0,10)`. Its India
+  dataset ships only 6 fixed holidays; Diwali/Holi/Eid-scale events come from the seeds file,
+  which must be re-verified each year (maintenance contract written into the file header).
+- FIX-3: per-user scoped storage (`bb_<uid>_*` keys via `src/utils/userScope.js`), with one-time
+  migration from legacy `bazaarBrain_profile` / `bazaarBrain_session` / `bazaarBrainHistory`.
+- FIX-4/7: same-day regenerate upserts the existing history entry and preserves feedback;
+  FeedbackBar copy is now "Noted — saved to your history."
+- FIX-5: history cap 5 → 50; each entry stores the full `ForecastResult`.
+- FIX-6: neutral weather failure — failure state sets the exported
+  `WEATHER_UNAVAILABLE_SIGNAL` (×1, "Weather data unavailable") instead of fabricating
+  "Clear & Sunny 1.2×"; the "Using fallback weather" badge already existed.
+- FIX-8/9: weather refetch every 30 min + on `visibilitychange`; `dateInfo` is state with a
+  minute tick, and a midnight rollover clears a stale forecast card (a same-day cache may
+  instantly restore today's fresh run).
+- FIX-10: numeric schema + client-side arithmetic repair (`toBuy = max(0, totalNeeded −
+  alreadyHave)`) with cross-check against the real Groq API (gpt-oss-120b, 2026-11-10);
+  temperature 0.2; day forecast cached in `sessionStorage` per stall+date.
+- FIX-11/12/13: dead `SetupPage` + `selectionStorage` + `/setup` route and fake
+  `LOADING_DURATION` removed; `RequireAuth` hoisted to module scope.
+- FIX-14/15: `.env.example` created; README clone URL/model/file-tree synced.
+- FIX-16/17/18 as above.
+- `npm run lint` and `npm run build` both pass (lint had pre-existing
+  `react-hooks/set-state-in-effect` failures in LoadingState/LoginPage/SignupPage — fixed by
+  lazy state init / documented "adjust state on prop change" render pattern).
+
+Deferred (only the Groq-key piece of FIX-2):
+- The Groq key is still bundled client-side (`.env` → `VITE_GROQ_API_KEY`), but the agent
+  already accepts a proxy via `VITE_FORECAST_URL`. Once the Supabase project exists, deploy
+  `supabase/functions/forecast` and the key leaves the client — no further code changes.
+- App bundle is 2,009 kB (minified, 416 kB gzip) — `date-holidays` pulls its full data index.
+  Follow-up: dynamic-import the holidays year lazily or vendor only the UP rules.
 
 ---
 
