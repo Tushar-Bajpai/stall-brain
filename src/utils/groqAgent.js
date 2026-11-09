@@ -1,5 +1,5 @@
 const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL = 'llama-3.3-70b-versatile'
+const GROQ_MODEL = 'openai/gpt-oss-120b'
 
 const SYSTEM_PROMPT = `You are Bazaar Brain, an AI demand forecaster for street vendors in Lucknow.
 Respond ONLY in the following JSON format, with no markdown and no extra keys:
@@ -120,7 +120,7 @@ Return precise procurement quantities and peak hours for Hazratganj, Lucknow.`
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.4,
-      max_tokens: 700,
+      max_tokens: 1500,
     }),
   })
 
