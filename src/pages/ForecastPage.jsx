@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useLocation } from 'react-router-dom'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { Link, Navigate } from 'react-router-dom'
 import { X } from 'lucide-react'
 import Header from '../components/Header'
 import SignalPanel from '../components/SignalPanel'
@@ -8,10 +8,14 @@ import FeedbackBar from '../components/FeedbackBar'
 import HistoryLog from '../components/HistoryLog'
 import LoadingState from '../components/LoadingState'
 import { getEventsForDate, getWeeklyMultiplier } from '../data/events'
-import { getWeatherSignal } from '../utils/weatherLogic'
+import {
+  WEATHER_UNAVAILABLE_SIGNAL,
+  getWeatherSignal,
+} from '../utils/weatherLogic'
 import { requestGroqForecast } from '../utils/groqAgent'
 import { getTodayInfo } from '../utils/dateTime'
 import { loadProfile } from '../utils/profileStorage'
+import { scopedKey } from '../utils/userScope'
 import {
   createSessionFromProfile,
   INVENTORY_UNITS,
@@ -21,13 +25,17 @@ import {
 
 const WEATHER_URL =
   'https://api.open-meteo.com/v1/forecast?latitude=26.85&longitude=80.95&current=temperature_2m,weathercode,windspeed_10m&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=Asia%2FKolkata&forecast_days=1'
+const WEATHER_REFRESH_MS = 30 * 60 * 1000
+// Display-only fallback for the weather card while/unless the API responds.
+// The SIGNAL on failure is neutral (WEATER_UNAVAILABLE_SIGNAL) — see FIX-6.
 const FALLBACK_WEATHER = {
   temperature: 32,
   weathercode: 0,
   windspeed: 8,
 }
-const HISTORY_KEY = 'bazaarBrainHistory'
-const LOADING_DURATION = 600 * 5 + 200
+// FIX-5: cap raised 5 → 50; each entry now stores the full forecast result.
+const HISTORY_MAX = 50
+const LEGACY_HISTORY_KEY = 'bazaarBrainHistory'
 
 const ERROR_COPY = {
   MISSING_API_KEY: {
@@ -39,6 +47,30 @@ const ERROR_COPY = {
   GROQ_REQUEST_FAILED: {
     title: 'Groq is unavailable',
     message: 'We could not reach the Groq API. Try again in a moment.',
+    action: 'Retry forecast',
+  },
+  GROQ_AUTH_FAILED: {
+    title: 'Groq key was rejected',
+    message:
+      'The API key sent to Groq is invalid or revoked (401). Check VITE_GROQ_API_KEY in your .env file — it must start with gsk_ and match a key in your Groq dashboard.',
+    action: 'Retry forecast',
+  },
+  GROQ_MODEL_UNAVAILABLE: {
+    title: 'Groq model is not available',
+    message:
+      'The AI model this app calls was retired or renamed (404 model_not_found). Set VITE_GROQ_MODEL in your .env file to a model listed at console.groq.com and restart the dev server.',
+    action: 'Retry forecast',
+  },
+  GROQ_RATE_LIMITED: {
+    title: 'Too many forecast requests',
+    message:
+      'Groq returned 429 — the free-tier rate limit was hit. Wait about a minute and try again.',
+    action: 'Retry forecast',
+  },
+  GROQ_NETWORK_FAILED: {
+    title: 'Network error',
+    message:
+      'We could not reach the internet to talk to Groq. Check your connection and retry.',
     action: 'Retry forecast',
   },
   GROQ_PARSE_FAILED: {
@@ -67,21 +99,35 @@ function buildInventorySnapshot(items, inventory) {
   }, {})
 }
 
+// FIX-3: history lives under a per-user key. First run after this change adopts
+// the old shared-key history so nobody loses their saved runs.
 function loadHistory() {
   if (typeof window === 'undefined') return []
   try {
-    const raw = localStorage.getItem(HISTORY_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
+    let stored = localStorage.getItem(scopedKey('history'))
+    if (!stored) {
+      const legacyRaw = localStorage.getItem(LEGACY_HISTORY_KEY)
+      if (legacyRaw) {
+        localStorage.setItem(scopedKey('history'), legacyRaw)
+        localStorage.removeItem(LEGACY_HISTORY_KEY)
+        stored = legacyRaw
+      }
+    }
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
     return Array.isArray(parsed) ? parsed : []
-  } catch (error) {
+  } catch {
     return []
   }
 }
 
 function saveHistory(items) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(items))
+  try {
+    localStorage.setItem(scopedKey('history'), JSON.stringify(items))
+  } catch {
+    // History is non-critical: a full/quota-blocked store must not crash the page.
+  }
 }
 
 function createId() {
@@ -95,15 +141,62 @@ function getErrorDetails(code) {
   return ERROR_COPY[code] ?? ERROR_COPY.UNKNOWN
 }
 
+function loadNetworkError(error) {
+  // fetch() only throws TypeError for network failure; everything HTTP-related
+  // arrives as a coded error from the agent.
+  return error instanceof TypeError && !error.code ? 'GROQ_NETWORK_FAILED' : null
+}
+
+// FIX-4: today's forecast survives navigation — cached per stall+day in
+// sessionStorage. Returning to the page restores the card instantly.
+function loadDayCache(stallId, dateString) {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(
+      scopedKey(`forecast-${stallId}-${dateString}`),
+    )
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed?.date !== dateString) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveDayCache(stallId, dateString, payload) {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem(
+      scopedKey(`forecast-${stallId}-${dateString}`),
+      JSON.stringify({ ...payload, date: dateString }),
+    )
+  } catch {
+    // Session cache is optional — ignore write failures silently.
+  }
+}
+
 export default function ForecastPage() {
-  const location = useLocation()
-  const [profile, setProfile] = useState(() => loadProfile())
-  const dateInfo = useMemo(() => getTodayInfo(), [])
-  const [sessionIngredients, setSessionIngredients] = useState([])
-  const [inventory, setInventory] = useState({})
+  // Lazy init reads storage synchronously on first render — no mount effects
+  // needed for bootstrapping (avoids cascading set-state-in-effect lint errors).
+  const [profile] = useState(() => loadProfile())
+  const [history, setHistory] = useState(() => loadHistory())
+  // FIX-9: the date was frozen at mount inside useMemo. It is now state that
+  // re-checks every minute, so a page left open over midnight rolls over
+  // (events/weekday change) instead of keeping yesterday's signals.
+  const [dateInfo, setDateInfo] = useState(() => getTodayInfo())
+  // Session bootstrap mirrors the profile synchronously: prefer the persisted
+  // "today" session, else seed it from the saved profile.
+  const [sessionIngredients, setSessionIngredients] = useState(() => {
+    const stored = loadForecastSession()
+    return stored?.sessionIngredients ?? createSessionFromProfile(profile).sessionIngredients
+  })
+  const [inventory, setInventory] = useState(() => {
+    const stored = loadForecastSession()
+    return stored?.inventory ?? createSessionFromProfile(profile).inventory
+  })
   const [newItem, setNewItem] = useState('')
   const [itemError, setItemError] = useState('')
-  const [sessionReady, setSessionReady] = useState(false)
 
   const stall = useMemo(() => {
     if (!profile) return null
@@ -113,24 +206,20 @@ export default function ForecastPage() {
       emoji: profile.stallEmoji,
       items: profile.ingredients,
     }
-  }, [
-    profile?.stallType,
-    profile?.stallLabel,
-    profile?.stallEmoji,
-    profile?.ingredients,
-  ])
+  }, [profile])
 
   const [phase, setPhase] = useState('loadingSignals')
   const [weather, setWeather] = useState(null)
-  const [weatherSignal, setWeatherSignal] = useState(getWeatherSignal(0))
-  const [fallbackWeather, setFallbackWeather] = useState(false)
+  const [weatherSignal, setWeatherSignal] = useState(WEATHER_UNAVAILABLE_SIGNAL)
+  const [fallbackWeather, setFallbackWeather] = useState(true)
   const [forecast, setForecast] = useState(null)
   const [showHindi, setShowHindi] = useState(false)
   const [errorState, setErrorState] = useState(null)
   const [feedback, setFeedback] = useState(null)
-  const [history, setHistory] = useState([])
   const [currentHistoryId, setCurrentHistoryId] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+
+  const weatherAbortRef = useRef(null)
 
   const eventsToday = useMemo(() => {
     return getEventsForDate(dateInfo.dateString)
@@ -146,103 +235,149 @@ export default function ForecastPage() {
   const weeklyMultiplier = getWeeklyMultiplier(dateInfo.dayName)
 
   const effectiveWeather = weather ?? FALLBACK_WEATHER
-  const effectiveWeatherSignal = weatherSignal ?? getWeatherSignal(0)
+  const effectiveWeatherSignal = weatherSignal
   const demandMultiplier =
     (effectiveWeatherSignal.footfallImpact ?? 1) *
     eventMultiplier *
     weeklyMultiplier
 
   useEffect(() => {
-    setHistory(loadHistory())
+    // Minute tick: date state re-checks once a minute (FIX-9). Functional state
+    // update keeps identity stable until the dateString actually changes.
+    const timer = setInterval(() => {
+      setDateInfo((prev) => {
+        const next = getTodayInfo()
+        return next.dateString === prev.dateString ? prev : next
+      })
+    }, 60 * 1000)
+    return () => clearInterval(timer)
   }, [])
 
   useEffect(() => {
-    setProfile(loadProfile())
-  }, [location.key])
-
-  useEffect(() => {
-    if (!profile) return
-    const storedSession = loadForecastSession()
-    const nextSession = storedSession ?? createSessionFromProfile(profile)
-    setSessionIngredients(nextSession.sessionIngredients)
-    setInventory(nextSession.inventory)
-    setSessionReady(true)
-  }, [profile])
-
-  useEffect(() => {
-    if (!sessionReady) return
+    // Persist the live "today" session whenever it changes.
     saveForecastSession({ sessionIngredients, inventory })
-  }, [sessionIngredients, inventory, sessionReady])
+  }, [sessionIngredients, inventory])
 
-  useEffect(() => {
-    if (sessionIngredients.length > 0 && itemError) {
-      setItemError('')
+  const fetchWeather = useCallback(async () => {
+    // Abort any in-flight request; the latest call wins.
+    weatherAbortRef.current?.abort()
+    const controller = new AbortController()
+    weatherAbortRef.current = controller
+
+    try {
+      const response = await fetch(WEATHER_URL, {
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        throw new Error('WEATHER_REQUEST_FAILED')
+      }
+      const data = await response.json()
+      const temperature = data?.current?.temperature_2m
+      const weathercode = data?.current?.weathercode
+      const windspeed = data?.current?.windspeed_10m
+
+      if (weatherAbortRef.current !== controller) return
+
+      setWeather({
+        temperature: Number.isFinite(temperature)
+          ? temperature
+          : FALLBACK_WEATHER.temperature,
+        weathercode: Number.isFinite(weathercode)
+          ? weathercode
+          : FALLBACK_WEATHER.weathercode,
+        windspeed: Number.isFinite(windspeed)
+          ? windspeed
+          : FALLBACK_WEATHER.windspeed,
+      })
+      setWeatherSignal(
+        getWeatherSignal(Number.isFinite(weathercode) ? weathercode : 0),
+      )
+      setFallbackWeather(false)
+      setPhase((prev) => (prev === 'loadingSignals' ? 'signalsReady' : prev))
+    } catch {
+      // FIX-6: never present a guessed sky as data. On failure the card shows
+      // the neutral "Weather data unavailable" signal (1x), not fake 1.2x sun.
+      if (weatherAbortRef.current !== controller) return
+      setWeather({ ...FALLBACK_WEATHER })
+      setWeatherSignal(WEATHER_UNAVAILABLE_SIGNAL)
+      setFallbackWeather(true)
+      setPhase((prev) => (prev === 'loadingSignals' ? 'signalsReady' : prev))
     }
-  }, [sessionIngredients, itemError])
+  }, [])
+
+  useEffect(() => () => {
+    // Abort any in-flight weather request when the page unmounts.
+    weatherAbortRef.current?.abort()
+  }, [])
 
   useEffect(() => {
     if (!stall) return
 
-    let active = true
-    const controller = new AbortController()
+    // FIX-8: refresh weather every 30 minutes and whenever the tab becomes
+    // visible again — a phone locked at 6am must not show 6am weather at noon.
+    // The initial fetch is timer-scheduled (100ms) so state updates never run
+    // synchronously inside the effect body.
+    const timeout = setTimeout(fetchWeather, 100)
+    const interval = setInterval(fetchWeather, WEATHER_REFRESH_MS)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchWeather()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
 
+    return () => {
+      clearTimeout(timeout)
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [stall, fetchWeather])
+
+  // Reset-on-change blocks (React's documented "adjust state when a prop
+  // changes" pattern): the former reset effects synchronized setState inside
+  // useEffect, which cascades renders. Comparing against the previous value
+  // during render is the recommended replacement.
+
+  const [prevStallId, setPrevStallId] = useState(null)
+  if (stall && prevStallId !== stall.id) {
+    setPrevStallId(stall.id)
     setPhase('loadingSignals')
     setWeather(null)
-    setWeatherSignal(getWeatherSignal(0))
-    setFallbackWeather(false)
+    setWeatherSignal(WEATHER_UNAVAILABLE_SIGNAL)
+    setFallbackWeather(true)
     setForecast(null)
     setErrorState(null)
     setShowHindi(false)
     setFeedback(null)
     setCurrentHistoryId(null)
+  }
 
-    async function fetchWeather() {
-      try {
-        const response = await fetch(WEATHER_URL, {
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          throw new Error('WEATHER_REQUEST_FAILED')
-        }
-        const data = await response.json()
-        const temperature = data?.current?.temperature_2m
-        const weathercode = data?.current?.weathercode
-        const windspeed = data?.current?.windspeed_10m
+  const [prevDateString, setPrevDateString] = useState(dateInfo.dateString)
+  if (prevDateString !== dateInfo.dateString) {
+    // FIX-9: midnight rollover — a stale forecast card must not keep claiming
+    // to be "today". The cache restore below may re-apply the fresh cached run.
+    setPrevDateString(dateInfo.dateString)
+    setPhase((prev) => (prev === 'forecastReady' ? 'signalsReady' : prev))
+    setForecast(null)
+    setErrorState(null)
+    setCurrentHistoryId(null)
+    setFeedback(null)
+  }
 
-        if (!active) return
-
-        setWeather({
-          temperature: Number.isFinite(temperature)
-            ? temperature
-            : FALLBACK_WEATHER.temperature,
-          weathercode: Number.isFinite(weathercode)
-            ? weathercode
-            : FALLBACK_WEATHER.weathercode,
-          windspeed: Number.isFinite(windspeed)
-            ? windspeed
-            : FALLBACK_WEATHER.windspeed,
-        })
-        setWeatherSignal(
-          getWeatherSignal(Number.isFinite(weathercode) ? weathercode : 0),
-        )
-        setFallbackWeather(false)
-        setPhase((prev) => (prev === 'loadingSignals' ? 'signalsReady' : prev))
-      } catch (error) {
-        if (!active) return
-        setWeather({ ...FALLBACK_WEATHER })
-        setWeatherSignal(getWeatherSignal(FALLBACK_WEATHER.weathercode))
-        setFallbackWeather(true)
-        setPhase((prev) => (prev === 'loadingSignals' ? 'signalsReady' : prev))
-      }
+  const [prevCacheKey, setPrevCacheKey] = useState(null)
+  if (stall && prevCacheKey !== `${stall.id}-${dateInfo.dateString}`) {
+    // FIX-4: restore the same-day cached forecast after navigation or a
+    // midnight rollover instead of showing an empty state.
+    const nextCacheKey = `${stall.id}-${dateInfo.dateString}`
+    setPrevCacheKey(nextCacheKey)
+    const cached = loadDayCache(stall.id, dateInfo.dateString)
+    if (cached?.forecast) {
+      setForecast(cached.forecast)
+      setCurrentHistoryId(cached.historyId ?? null)
+      setFeedback(cached.feedback ?? null)
+      setPhase('forecastReady')
     }
-
-    fetchWeather()
-
-    return () => {
-      active = false
-      controller.abort()
-    }
-  }, [stall?.id])
+  }
 
   const handleRemoveItem = (itemName) => {
     setSessionIngredients((prev) => prev.filter((item) => item !== itemName))
@@ -251,6 +386,7 @@ export default function ForecastPage() {
       delete next[itemName]
       return next
     })
+    setItemError('')
   }
 
   const handleAddItem = () => {
@@ -269,6 +405,7 @@ export default function ForecastPage() {
       [trimmed]: prev[trimmed] ?? { quantity: 0, unit: INVENTORY_UNITS[0] },
     }))
     setNewItem('')
+    setItemError('')
   }
 
   const handleInventoryChange = (itemName, field, value) => {
@@ -302,23 +439,28 @@ export default function ForecastPage() {
       return
     }
 
+    // FIX-7: regenerating the same day updates the existing history entry and
+    // preserves its feedback, instead of discarding it and minting a new id.
+    const existingEntry = history.find(
+      (item) =>
+        item.date === dateInfo.dateString && item.stallId === stall.id,
+    )
+    const entryId = existingEntry?.id ?? createId()
+    const keptFeedback = existingEntry?.feedback ?? null
+
     setPhase('loadingForecast')
     setErrorState(null)
     setForecast(null)
     setShowHindi(false)
-    setFeedback(null)
+    setFeedback(keptFeedback)
 
     const inventorySnapshot = buildInventorySnapshot(
       sessionIngredients,
       inventory,
     )
 
-    const delay = new Promise((resolve) => {
-      setTimeout(resolve, LOADING_DURATION)
-    })
-
     try {
-      const forecastPromise = requestGroqForecast({
+      const result = await requestGroqForecast({
         stall,
         items: sessionIngredients,
         inventory: inventorySnapshot,
@@ -332,9 +474,7 @@ export default function ForecastPage() {
         demandMultiplier: Number(demandMultiplier.toFixed(2)),
       })
 
-      const [result] = await Promise.all([forecastPromise, delay])
-
-      const entryId = createId()
+      const demandMultiplierValue = Number(demandMultiplier.toFixed(2))
       const newEntry = {
         id: entryId,
         date: dateInfo.dateString,
@@ -342,10 +482,11 @@ export default function ForecastPage() {
         stallId: stall.id,
         stallName: stall.name,
         expectedCustomers: result.expectedCustomers,
-        demandMultiplier: Number(demandMultiplier.toFixed(2)),
+        demandMultiplier: demandMultiplierValue,
         summary: result.summary,
-        feedback: null,
+        feedback: keptFeedback,
         inventorySnapshot,
+        result,
       }
 
       setCurrentHistoryId(entryId)
@@ -353,16 +494,21 @@ export default function ForecastPage() {
         const filtered = prev.filter(
           (item) => item.date !== newEntry.date || item.stallId !== newEntry.stallId,
         )
-        const next = [newEntry, ...filtered].slice(0, 5)
+        const next = [newEntry, ...filtered].slice(0, HISTORY_MAX)
         saveHistory(next)
         return next
+      })
+
+      saveDayCache(stall.id, dateInfo.dateString, {
+        forecast: result,
+        historyId: entryId,
+        feedback: keptFeedback,
       })
 
       setForecast(result)
       setPhase('forecastReady')
     } catch (error) {
-      await delay
-      setErrorState(error?.code ?? 'UNKNOWN')
+      setErrorState(loadNetworkError(error) ?? error?.code ?? 'UNKNOWN')
       setPhase('error')
     }
   }
@@ -377,6 +523,13 @@ export default function ForecastPage() {
       saveHistory(next)
       return next
     })
+    if (stall) {
+      saveDayCache(stall.id, dateInfo.dateString, {
+        forecast,
+        historyId: currentHistoryId,
+        feedback: value,
+      })
+    }
   }
 
   if (!profile || !stall) {
@@ -636,3 +789,4 @@ export default function ForecastPage() {
     </main>
   )
 }
+

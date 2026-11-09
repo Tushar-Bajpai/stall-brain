@@ -37,6 +37,13 @@ const weatherMappings = [
   },
 ]
 
+export const WEATHER_UNAVAILABLE_SIGNAL = {
+  label: 'Weather data unavailable',
+  footfallImpact: 1,
+  recommendation:
+    'Open-Meteo could not be reached — planning for a regular demand day instead of guessing.',
+}
+
 export function getWeatherSignal(code) {
   const mapping = weatherMappings.find((entry) => entry.codes.includes(code))
 

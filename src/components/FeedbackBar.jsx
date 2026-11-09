@@ -4,7 +4,7 @@ export default function FeedbackBar({ feedback, onFeedback }) {
   if (feedback) {
     return (
       <div className="mt-6 rounded-2xl border border-[var(--color-success)] bg-[rgba(74,222,128,0.12)] px-5 py-4 text-sm text-[var(--color-text-primary)]">
-        Thanks for the feedback! We&apos;ll improve tomorrow&apos;s forecast.
+        Noted — saved to your history.
       </div>
     )
   }
