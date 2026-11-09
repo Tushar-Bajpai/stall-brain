@@ -1,4 +1,11 @@
-const SESSION_KEY = 'bazaarBrain_session'
+// FIX-3 (Phase 0): session data is scoped per signed-in user (see userScope.js).
+// Legacy un-scoped data under 'bazaarBrain_session' is migrated once per user so
+// switching devices/accounts never leaves a vendor with an empty session.
+
+import { scopedKey } from './userScope'
+
+const SESSION_KEY = 'session'
+const LEGACY_SESSION_KEY = 'bazaarBrain_session'
 
 export const INVENTORY_UNITS = [
   'kg',
@@ -59,6 +66,19 @@ function buildInventoryForItems(items, inventory) {
   }, {})
 }
 
+function decodeSession(raw) {
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed?.sessionIngredients)) return null
+
+  const sessionIngredients = normalizeIngredients(parsed.sessionIngredients)
+  const inventory = buildInventoryForItems(sessionIngredients, parsed.inventory)
+
+  return {
+    sessionIngredients,
+    inventory,
+  }
+}
+
 export function createSessionFromProfile(profile) {
   const sessionIngredients = normalizeIngredients(profile?.ingredients)
   return {
@@ -70,19 +90,19 @@ export function createSessionFromProfile(profile) {
 export function loadForecastSession() {
   if (typeof window === 'undefined') return null
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed?.sessionIngredients)) return null
+    const raw = localStorage.getItem(scopedKey(SESSION_KEY))
+    if (raw) return decodeSession(raw)
 
-    const sessionIngredients = normalizeIngredients(parsed.sessionIngredients)
-    const inventory = buildInventoryForItems(sessionIngredients, parsed.inventory)
-
-    return {
-      sessionIngredients,
-      inventory,
+    // One-time legacy migration.
+    const legacyRaw = localStorage.getItem(LEGACY_SESSION_KEY)
+    if (!legacyRaw) return null
+    const migrated = decodeSession(legacyRaw)
+    if (migrated) {
+      saveForecastSession(migrated)
+      localStorage.removeItem(LEGACY_SESSION_KEY)
     }
-  } catch (error) {
+    return migrated
+  } catch {
     return null
   }
 }
@@ -98,7 +118,7 @@ export function saveForecastSession({ sessionIngredients, inventory }) {
   )
 
   localStorage.setItem(
-    SESSION_KEY,
+    scopedKey(SESSION_KEY),
     JSON.stringify({
       sessionIngredients: normalizedIngredients,
       inventory: normalizedInventory,
@@ -108,5 +128,7 @@ export function saveForecastSession({ sessionIngredients, inventory }) {
 
 export function clearForecastSession() {
   if (typeof window === 'undefined') return
-  localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(scopedKey(SESSION_KEY))
+  // Also clean the legacy key so a re-migration can't resurrect an old session.
+  localStorage.removeItem(LEGACY_SESSION_KEY)
 }

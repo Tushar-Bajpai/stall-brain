@@ -3,12 +3,22 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from './utils/firebase'
+import { setActiveUser } from './utils/userScope'
 import HomePage from './pages/HomePage'
 import LandingPage from './pages/LandingPage'
 import ProfilePage from './pages/ProfilePage'
 import ForecastPage from './pages/ForecastPage'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
+
+// FIX-13 (Phase 0): declared at module scope on purpose. Defining it inside the
+// App component body made every App re-render create a *new* component type,
+// which unmounted and remounted all route children (flicker + lost state).
+function RequireAuth({ authReady, isLoggedIn, children }) {
+  if (!authReady) return null
+  if (!isLoggedIn) return <Navigate to="/login" replace />
+  return children
+}
 
 export default function App() {
   const location = useLocation()
@@ -18,17 +28,13 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setIsLoggedIn(Boolean(user))
+      // FIX-3 (Phase 0): all per-user localStorage scoping keys off this id.
+      setActiveUser(user?.uid ?? null)
       setAuthReady(true)
     })
 
     return () => unsubscribe()
   }, [])
-
-  const RequireAuth = ({ children }) => {
-    if (!authReady) return null
-    if (!isLoggedIn) return <Navigate to="/login" replace />
-    return children
-  }
 
   return (
     <div className="relative min-h-screen bg-(--color-bg-base) text-(--color-text-primary)">
@@ -48,18 +54,12 @@ export default function App() {
               <Route path="/home" element={<HomePage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
-              <Route
-                path="/setup"
-                element={
-                  <RequireAuth>
-                    <Navigate to="/profile" replace />
-                  </RequireAuth>
-                }
-              />
+              {/* FIX-11 (Phase 0): /setup removed — was a dead redirect to
+                  /profile with an unreachable SetupPage behind it. */}
               <Route
                 path="/profile"
                 element={
-                  <RequireAuth>
+                  <RequireAuth authReady={authReady} isLoggedIn={isLoggedIn}>
                     <ProfilePage />
                   </RequireAuth>
                 }
@@ -67,8 +67,7 @@ export default function App() {
               <Route
                 path="/forecast"
                 element={
-                  <RequireAuth>
-                    
+                  <RequireAuth authReady={authReady} isLoggedIn={isLoggedIn}>
                     <ForecastPage />
                   </RequireAuth>
                 }
