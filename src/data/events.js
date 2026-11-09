@@ -1,209 +1,96 @@
-export const events = [
-  {
-    date: '2025-01-01',
-    name: 'New Year Market Rush',
-    type: 'public-holiday',
-    impactMultiplier: 1.15,
-  },
-  {
-    date: '2025-01-14',
-    name: 'Makar Sankranti',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-01-26',
-    name: 'Republic Day',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-02-02',
-    name: 'Hazratganj Mahotsav',
-    type: 'festival',
-    impactMultiplier: 1.35,
-  },
-  {
-    date: '2025-02-10',
-    name: 'UP Elections (Tentative)',
-    type: 'civic',
-    impactMultiplier: 1.1,
-  },
-  {
-    date: '2025-02-26',
-    name: 'Maha Shivratri',
-    type: 'public-holiday',
-    impactMultiplier: 1.25,
-  },
-  {
-    date: '2025-03-14',
-    name: 'Holi',
-    type: 'public-holiday',
-    impactMultiplier: 1.5,
-  },
-  {
-    date: '2025-03-31',
-    name: 'Eid al-Fitr',
-    type: 'public-holiday',
-    impactMultiplier: 1.5,
-  },
-  {
-    date: '2025-04-06',
-    name: 'Ram Navami',
-    type: 'public-holiday',
-    impactMultiplier: 1.25,
-  },
-  {
-    date: '2025-04-10',
-    name: 'Mahavir Jayanti',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-04-14',
-    name: 'Ambedkar Jayanti',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-04-18',
-    name: 'Good Friday',
-    type: 'public-holiday',
-    impactMultiplier: 1.1,
-  },
-  {
-    date: '2025-05-01',
-    name: 'Labour Day',
-    type: 'public-holiday',
-    impactMultiplier: 1.1,
-  },
-  {
-    date: '2025-05-12',
-    name: 'Buddha Purnima',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-06-07',
-    name: 'Eid al-Adha',
-    type: 'public-holiday',
-    impactMultiplier: 1.45,
-  },
-  {
-    date: '2025-07-06',
-    name: 'Muharram',
-    type: 'public-holiday',
-    impactMultiplier: 0.95,
-  },
-  {
-    date: '2025-08-09',
-    name: 'Raksha Bandhan',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-08-15',
-    name: 'Independence Day',
-    type: 'public-holiday',
-    impactMultiplier: 1.3,
-  },
-  {
-    date: '2025-08-16',
-    name: 'Janmashtami',
-    type: 'public-holiday',
-    impactMultiplier: 1.25,
-  },
-  {
-    date: '2025-08-27',
-    name: 'Ganesh Chaturthi',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-09-05',
-    name: 'Milad un-Nabi',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-09-22',
-    name: 'Navratri Begins',
-    type: 'festival',
-    impactMultiplier: 1.35,
-  },
-  {
-    date: '2025-10-02',
-    name: 'Gandhi Jayanti',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-10-02',
-    name: 'Dussehra',
-    type: 'public-holiday',
-    impactMultiplier: 1.35,
-  },
-  {
-    date: '2025-10-20',
-    name: 'Diwali',
-    type: 'public-holiday',
-    impactMultiplier: 1.6,
-  },
-  {
-    date: '2025-11-05',
-    name: 'Guru Nanak Jayanti',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-11-22',
-    name: 'Lucknow Mahotsav',
-    type: 'festival',
-    impactMultiplier: 1.45,
-  },
-  {
-    date: '2025-12-25',
-    name: 'Christmas',
-    type: 'public-holiday',
-    impactMultiplier: 1.2,
-  },
-  {
-    date: '2025-04-06',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
-  {
-    date: '2025-04-12',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
-  {
-    date: '2025-04-18',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
-  {
-    date: '2025-04-27',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
-  {
-    date: '2025-05-04',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
-  {
-    date: '2025-05-11',
-    name: 'IPL LSG Home Match',
-    type: 'sport',
-    impactMultiplier: 1.4,
-  },
+// Runtime event core — FIX-1 (Phase 0).
+// The old `events.js` was a static array whose last entries were Dec 2025, so
+// eventMultiplier silently became 1.0 forever. Events are now computed:
+//   1. Indian national/state holidays from the `date-holidays` package (offline)
+//   2. Market-specific seeds (Lucknow city events) from `marketSeeds`
+//   3. Fixed weekly footfall pattern
+// The exported API is unchanged: getEventsForDate(dateString), getWeeklyMultiplier(dayName).
+
+import Holidays from 'date-holidays'
+import { marketSeeds } from './marketSeeds'
+
+const hd = new Holidays()
+hd.init('IN', 'UP')
+
+// This build of date-holidays returns ALL holidays of the year when
+// getHolidays(year, month, day) is called — the day argument is ignored.
+// So: fetch once per year (cached), filter by each entry's own `date`.
+const yearCache = new Map()
+
+function getHolidaysForYear(year) {
+  if (!yearCache.has(year)) {
+    try {
+      yearCache.set(year, hd.getHolidays(year))
+    } catch {
+      yearCache.set(year, [])
+    }
+  }
+  return yearCache.get(year)
+}
+
+// Holiday names (date-holidays returns English names) → footfall impact.
+// First regex match wins; anything unmatched defaults to a mild holiday bump.
+const HOLIDAY_IMPACT = [
+  [/diwali/i, 1.6],
+  [/holi/i, 1.5],
+  [/eid/i, 1.5],
+  [/dussehra|dasara|dashain/i, 1.35],
+  [/navratri/i, 1.35],
+  [/ganesh/i, 1.2],
+  [/guru nanak/i, 1.2],
+  [/christmas/i, 1.2],
+  [/new year/i, 1.15],
+  [/independence|republic|gandhi jayanti|ambedkar|labour|budha|buddha|maha shivratri|shivaratri|janmashtami|raksha|muharram|milad|mahavir|good friday/i, 1.2],
 ]
+
+const DEFAULT_HOLIDAY_IMPACT = 1.2
+// Observances (not full public holidays) barely move footfall.
+const OBSERVANCE_IMPACT = 1.05
+
+/**
+ * @param {string} dateString - 'YYYY-MM-DD' in Asia/Kolkata
+ * @returns {{date:string,name:string,type:string,impactMultiplier:number}[]}
+ */
+export function getEventsForDate(dateString) {
+  const [year] = dateString.split('-').map(Number)
+  if (!year) return []
+
+  const holidays = getHolidaysForYear(year)
+    .filter(
+      (entry) =>
+        entry.date && entry.date.slice(0, 10) === dateString,
+    )
+    .map((entry) => {
+      const rule = HOLIDAY_IMPACT.find(([regex]) => regex.test(entry.name))
+      const isObservance = entry.type === 'observance'
+      const impact = isObservance
+        ? OBSERVANCE_IMPACT
+        : rule
+          ? rule[1]
+          : DEFAULT_HOLIDAY_IMPACT
+      return {
+        date: dateString,
+        name: entry.name,
+        type: isObservance ? 'observance' : 'public-holiday',
+        impactMultiplier: impact,
+      }
+    })
+
+  const seeds = marketSeeds
+    .filter((seed) => seed.date === dateString)
+    .map((seed) => ({ ...seed, date: dateString }))
+
+  // Same-day merges: keep every event, but never let aggregations double-count.
+  // Deterministic: sort by impact descending so `Math.max` at the call site stays
+  // stable regardless of source order.
+  return [...holidays, ...seeds].sort(
+    (a, b) => b.impactMultiplier - a.impactMultiplier,
+  )
+}
+
+export function getWeeklyMultiplier(dayName) {
+  return weeklyPattern[dayName] ?? 1
+}
 
 export const weeklyPattern = {
   Monday: 0.8,
@@ -213,12 +100,4 @@ export const weeklyPattern = {
   Friday: 1.2,
   Saturday: 1.3,
   Sunday: 1.4,
-}
-
-export function getWeeklyMultiplier(dayName) {
-  return weeklyPattern[dayName] ?? 1
-}
-
-export function getEventsForDate(dateString) {
-  return events.filter((event) => event.date === dateString)
 }
