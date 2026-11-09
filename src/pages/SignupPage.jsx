@@ -14,7 +14,7 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const getPostAuthRoute = (user) => {
     if (!user) return "/signup";
@@ -26,7 +26,6 @@ export default function SignupPage() {
 
   useEffect(() => {
     let active = true;
-    setIsLoading(true);
     getRedirectResult(auth)
       .then((result) => {
         if (!active) return;

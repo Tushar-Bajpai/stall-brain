@@ -10,15 +10,13 @@ const steps = [
 ]
 
 export default function LoadingState({ active }) {
-  const [activeIndex, setActiveIndex] = useState(-1)
+  const [activeIndex, setActiveIndex] = useState(0)
 
+  // The step ticker only advances while the loading panel is shown; state is
+  // never touched synchronously on activation (avoids cascading renders).
   useEffect(() => {
-    if (!active) {
-      setActiveIndex(-1)
-      return
-    }
+    if (!active) return
 
-    setActiveIndex(0)
     const interval = setInterval(() => {
       setActiveIndex((prev) => {
         if (prev >= steps.length) {
@@ -32,6 +30,8 @@ export default function LoadingState({ active }) {
     return () => clearInterval(interval)
   }, [active])
 
+  const visibleIndex = active ? activeIndex : -1
+
   return (
     <div className="mt-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-6">
       <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
@@ -39,11 +39,11 @@ export default function LoadingState({ active }) {
       </h3>
       <div className="mt-4 space-y-3">
         {steps.map((step, index) => {
-          const isVisible = index <= activeIndex
+          const isVisible = index <= visibleIndex
           if (!isVisible) return null
 
-          const isActive = index === activeIndex && activeIndex < steps.length
-          const isDone = index < activeIndex || activeIndex >= steps.length
+          const isActive = index === visibleIndex && visibleIndex < steps.length
+          const isDone = index < visibleIndex || visibleIndex >= steps.length
 
           const textColor = isActive
             ? 'text-[var(--color-primary)] animate-pulse'

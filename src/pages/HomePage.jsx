@@ -46,7 +46,7 @@ export default function HomePage() {
           getWeatherSignal(Number.isFinite(weathercode) ? weathercode : 0),
         )
         setFallbackWeather(false)
-      } catch (error) {
+      } catch {
         if (!active) return
         setWeather({ ...FALLBACK_WEATHER })
         setWeatherSignal(getWeatherSignal(FALLBACK_WEATHER.weathercode))
