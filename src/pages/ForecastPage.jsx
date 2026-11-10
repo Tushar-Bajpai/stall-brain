@@ -603,6 +603,12 @@ export default function ForecastPage() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
+              to="/market"
+              className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-transparent px-4 py-2 text-sm font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-card-hover)]"
+            >
+              Mandi
+            </Link>
+            <Link
               to="/profile"
               className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-transparent px-4 py-2 text-sm font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-card-hover)]"
             >

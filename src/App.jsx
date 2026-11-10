@@ -8,6 +8,7 @@ import HomePage from './pages/HomePage'
 import LandingPage from './pages/LandingPage'
 import ProfilePage from './pages/ProfilePage'
 import ForecastPage from './pages/ForecastPage'
+import MarketPage from './pages/MarketPage'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 
@@ -69,6 +70,16 @@ export default function App() {
                 element={
                   <RequireAuth authReady={authReady} isLoggedIn={isLoggedIn}>
                     <ForecastPage />
+                  </RequireAuth>
+                }
+              />
+              {/* Phase 2: vendor network board — same auth gate as the rest
+                  of the app surface. */}
+              <Route
+                path="/market"
+                element={
+                  <RequireAuth authReady={authReady} isLoggedIn={isLoggedIn}>
+                    <MarketPage />
                   </RequireAuth>
                 }
               />

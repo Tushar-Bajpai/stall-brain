@@ -26,6 +26,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { normalizeIngredients } from './profileStorage'
+import { CURRENT_MARKET_SLUG } from '../data/markets'
 
 function currentUid() {
   return auth?.currentUser?.uid ?? null
@@ -42,7 +43,17 @@ function normalizeProfileDoc(data) {
 
   if (!stallType || !stallLabel || !stallEmoji) return null
 
-  return { stallType, stallLabel, stallEmoji, ingredients }
+  return {
+    stallType,
+    stallLabel,
+    stallEmoji,
+    ingredients,
+    phone: typeof data.phone === 'string' ? data.phone.trim() : '',
+    marketSlug:
+      typeof data.marketSlug === 'string' && data.marketSlug
+        ? data.marketSlug
+        : CURRENT_MARKET_SLUG,
+  }
 }
 
 function toProfilePayload(profile) {
@@ -51,7 +62,9 @@ function toProfilePayload(profile) {
     stallLabel: profile.stallLabel,
     stallEmoji: profile.stallEmoji,
     ingredients: normalizeIngredients(profile.ingredients),
-    marketSlug: 'hazratganj',
+    // Merge semantics below keep `phone` (set via saveProfileContactNumber)
+    // and `marketSlug` intact when ProfilePage re-saves without them.
+    marketSlug: CURRENT_MARKET_SLUG,
     updatedAt: serverTimestamp(),
   }
 }
@@ -77,6 +90,38 @@ export async function loadCloudProfile() {
   const snapshot = await getDoc(doc(db, 'profiles', uid))
   if (!snapshot.exists()) return null
   return normalizeProfileDoc(snapshot.data())
+}
+
+// Phase 2: the poster's contact number lives on the profile doc and is only
+// revealed on a post's "Milega?" action — never exposed in batch UIs.
+export async function saveProfileContactNumber(phone) {
+  const uid = currentUid()
+  if (!uid) return null
+  const safePhone = typeof phone === 'string' ? phone.trim().slice(0, 20) : ''
+  await setDoc(
+    doc(db, 'profiles', uid),
+    { phone: safePhone, updatedAt: serverTimestamp() },
+    { merge: true },
+  )
+  return safePhone
+}
+
+// Profiles created before the vendor-network phase may lack marketSlug, which
+// the board rules compare against. Backfill it (merge) before listing.
+export async function ensureProfileMarket() {
+  const uid = currentUid()
+  if (!uid) return null
+
+  const ref = doc(db, 'profiles', uid)
+  const snapshot = await getDoc(ref)
+  if (!snapshot.exists()) return null
+  if (snapshot.data().marketSlug) return true
+  await setDoc(
+    ref,
+    { marketSlug: CURRENT_MARKET_SLUG, updatedAt: serverTimestamp() },
+    { merge: true },
+  )
+  return true
 }
 
 // ---------------------------------------------------------------------------

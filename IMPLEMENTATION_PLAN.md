@@ -302,6 +302,41 @@ chat, or settlement features until this board gets daily organic posts.
 block cross-market reads (verify with Emulator Suite rules tests); board updates
 live without refresh.
 
+### Phase-2 status (2026-11-10) — implemented in code, awaiting setup + verification
+
+Done (all uncommitted — the user handles git from this phase on):
+- `src/data/markets.js`: pilot market constants (`CURRENT_MARKET_SLUG = 'hazratganj'`).
+- `src/utils/marketStore.js`: `subscribeToMarketBoard` (realtime onSnapshot on the §2.1 query),
+  `upsertOwnPost` (one active post per owner+item+kind, query-then-write), `closeOwnPost`
+  (status → 'done').
+- `src/utils/cloudStore.js` additions: `saveProfileContactNumber` (phone on `profiles/{uid}`),
+  `ensureProfileMarket` (backfills `marketSlug` for Phase-1 profiles; rules compare it),
+  profile normalization now carries `phone` + `marketSlug`.
+- `firestore.rules`: added `markets` (read for signed-in, no client writes) and `posts`
+  (live+same-market reads, own posts any state, create validation incl. contact ≤ 20 chars +
+  expiry ≤ 12 h, update/delete own-only).
+- `firestore.indexes.json`: composite index `posts (marketSlug asc, status asc, expiresAt desc)`.
+- `src/pages/MarketPage.jsx` (new): Surplus(🟢)/Needed(🔴) tabs fed by one snapshot stream
+  (kind filtered client-side); post form with item datalist from the vendor's own ingredients
+  + free text, qty+unit (`INVENTORY_UNITS`), optional ₹ price, note, expiry chips
+  (12 PM / 4 PM / 8 PM / custom time, all resolving to the next occurrence ≤ 12 h); phone
+  number required on the first post (persisted to the profile doc, revealed only on interest);
+  interest action "मुझे चाहिए — Milega!" reveals the contact with a `tel:` call link; own posts
+  get "Mark done"; per-post expiry countdown on a 30-second tick; fully bilingual copy; styling
+  reuses the existing design tokens only (no theme/font/color changes).
+- `src/App.jsx`: `/market` route behind `RequireAuth`.
+- `src/pages/ForecastPage.jsx`: "Mandi" pill link in the top bar (same classes as "Profile").
+
+**User actions to light it up (blocking "done when"):**
+1. Firebase console → Firestore → Rules: replace with the updated `firestore.rules` (adds
+   `markets` + `posts` blocks) → Publish.
+2. Create the composite index: the first board load will fail with a Firestore error containing
+   a direct "Create index" link — click it (or deploy `firestore.indexes.json` with the CLI).
+3. Redeploy / refresh dev. Verify: (a) two accounts in the same market post and see each
+   other's posts live; (b) an item can't get a second open post for the same kind (the old one
+   is overwritten); (c) contact only appears after "Milega!"; (d) "Mark done" removes the post
+   from the board; (e) posts vanish once past `expiresAt`.
+
 ---
 
 ## Phase 3 — Web Push (free, no WhatsApp)

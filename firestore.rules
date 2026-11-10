@@ -27,9 +27,46 @@ service cloud.firestore {
       }
     }
 
-    // Vendor network posts (Phase 2) are intentionally NOT allowed yet:
-    // uncommented when that phase ships — deny-all until then.
-    // match /posts/{postId} { ... }
+    // Phase 2: market registry. Seeded from the console (Phase 6 makes this
+    // an admin flow); clients only read it.
+    match /markets/{slug} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Phase 2: vendor surplus/need board (posts-first, no chat anywhere).
+    match /posts/{postId} {
+      allow read: if request.auth != null && (
+        // Any signed-in vendor sees live posts of their own market.
+        (resource.data.status == 'open'
+          && resource.data.expiresAt > request.time
+          && resource.data.marketSlug
+            == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.marketSlug)
+        // ...plus their own posts, in any state.
+        || resource.data.ownerId == request.auth.uid
+      );
+
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.kind in ['offer', 'want']
+        && request.resource.data.status == 'open'
+        && request.resource.data.marketSlug
+          == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.marketSlug
+        && request.resource.data.itemLabel is string
+        && request.resource.data.itemLabel.size() > 0
+        && request.resource.data.itemLabel.size() <= 80
+        && request.resource.data.contact is string
+        && request.resource.data.contact.size() > 0
+        && request.resource.data.contact.size() <= 20
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(12, 'h');
+
+      allow update, delete: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.marketSlug == resource.data.marketSlug
+        && request.resource.data.status in ['open', 'matched', 'done'];
+    }
 
     // Everything else: denied implicitly (no match = no access).
   }
