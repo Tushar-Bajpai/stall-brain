@@ -10,6 +10,12 @@ import {
   saveProfileContactNumber,
 } from '../utils/cloudStore'
 import {
+  ensurePushRegistered,
+  notificationPermission,
+  notifyPushOnPost,
+  requestNotificationPermission,
+} from '../utils/pushStore'
+import {
   BOARD_MAX_HOURS,
   closeOwnPost,
   subscribeToMarketBoard,
@@ -61,6 +67,9 @@ export default function MarketPage() {
   const [toast, setToast] = useState('')
   const toastTimer = useRef(null)
 
+  // Push permission: lazy-sync read; updated only from user-gesture handlers.
+  const [pushPermission, setPushPermission] = useState(() => notificationPermission())
+
   // Ticking clock: re-rendered every 30s from the interval callback so the
   // "expires in" labels and chip availability stay honest. The clock lives in
   // state (not a render-time Date.now()) to keep the render pure.
@@ -87,6 +96,14 @@ export default function MarketPage() {
         }
       })
       .catch(() => setNeedsContact(true))
+  }, [])
+
+  useEffect(() => {
+    // Phase 3: a vendor who already granted the permission gets their FCM
+    // token (re)registered silently on every board visit — ask for permission
+    // only through the banner button, never on page load.
+    if (notificationPermission() !== 'granted') return
+    ensurePushRegistered().catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -204,6 +221,15 @@ export default function MarketPage() {
         expiresAt: expiryTarget,
       })
       if (!created) throw new Error('rejected')
+      // Phase 3: alert matching neighbors (fire-and-forget, never on failure).
+      notifyPushOnPost({
+        kind: activeKind,
+        itemLabel: trimmedItem,
+        itemKey: trimmedItem.toLowerCase(),
+        qty: Number(qty) || 0,
+        unit: unit || INVENTORY_UNITS[0],
+        price: price.trim() ? Number(price) : null,
+      })
       setItemLabel('')
       setQty('')
       setPrice('')
@@ -228,6 +254,27 @@ export default function MarketPage() {
       showToast('Marked done · हो गया')
     } catch {
       showToast('Could not update. Retry. · अपडेट नहीं हुआ, फिर कोशिश करें')
+    }
+  }
+
+  async function handleEnablePush() {
+    // §Permission UX: asked from this banner gesture only, not on page load.
+    try {
+      const result = await requestNotificationPermission()
+      setPushPermission(result)
+      if (result !== 'granted') {
+        showToast('Alerts need browser permission · अलर्ट के लिए अनुमति चाहिए')
+        return
+      }
+      const token = await ensurePushRegistered()
+      showToast(
+        token
+          ? 'Alerts on — neighbors can reach you · अलर्ट चालू'
+          : 'Could not activate alerts, retry · अलर्ट चालू नहीं हो सका, फिर कोशिश करें',
+      )
+    } catch {
+      setPushPermission(notificationPermission())
+      showToast('Alerts could not be enabled · अलर्ट चालू नहीं हो सके')
     }
   }
 
@@ -273,6 +320,38 @@ export default function MarketPage() {
           <br />(अपना फ़ालतू सामान और जो कमी है, दोनों यहाँ लगाएँ — उसी मंडी के
           दुकानदार जवाब देंगे।)
         </p>
+
+        {/* Phase 3: permission UX — enable alerts here, never on app load */}
+        {pushPermission === 'default' ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-5 py-3">
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              🔔 Turn on neighbor alerts — get a notification the moment someone
+              posts an item you need (or needs yours).
+              <br />(साथी दुकानदार को आपकी चीज़ चाहिए होगी तो सीधे ख़बर मिलेगी।)
+            </p>
+            <button
+              type="button"
+              onClick={handleEnablePush}
+              className="rounded-full bg-[var(--color-primary)] px-4 py-2 text-xs font-bold text-[#0D0D0D] transition hover:bg-[var(--color-primary-dark)]"
+            >
+              Enable alerts · अलर्ट चालू करें
+            </button>
+          </div>
+        ) : null}
+        {pushPermission === 'denied' ? (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            Alerts are blocked in the browser settings — unblock site
+            notifications to get neighbor alerts.
+            <br />(अलर्ट ब्राउज़र सेटिंग में बंद हैं — साइट नोटिफिकेशन चालू करें।)
+          </p>
+        ) : null}
+        {pushPermission === 'unsupported' ? (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            Alert support depends on the browser — on iPhone, alerts arrive once
+            the app is installed from the home screen (coming soon).
+            <br />(iPhone पर अलर्ट ऐप इंस्टॉल करने के बाद आएँगे — जल्द आ रहा है।)
+          </p>
+        ) : null}
 
         {boardError ? (
           <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-5 py-3 text-sm text-[var(--color-danger)]">

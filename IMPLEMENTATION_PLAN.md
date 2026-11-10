@@ -369,6 +369,53 @@ Goal: "a neighbor just posted a need that matches your surplus" alerts.
 **Phase-3 done when:** posting a `want` while other users are online produces a notification
 on another device within ~10 s, and Chrome refuses gracefully if permission denied.
 
+### Phase-3 status (2026-11-10) — implemented in code, awaiting setup + verification
+
+Done (all uncommitted — the user handles git from Phase 2 on):
+- `public/firebase-messaging-sw.js` (new): background FCM worker — imports the compat SDK from
+  the gstatic CDN, receives its Firebase config via the **registration query string** (no
+  config baked into the repo), composes + displays data-only webpush notifications with a
+  deep link, dedupes per topic `tag`, and focuses/opens `/market` on click.
+- `src/utils/pushStore.js` (new): `notificationPermission` (lazy UI read),
+  `requestNotificationPermission` (gesture-only), `ensurePushRegistered` (getToken with the
+  `VITE_FIREBASE_VAPID_KEY` public key + stores the token in `fcmTokens/` with a
+  **deterministic doc id `uid__token`** so re-registration never duplicates and no extra index
+  is needed), `disablePush` (delete token + Firestore docs), `notifyPushOnPost`
+  (fire-and-forget POST to `/api/push-on-post` with the vendor's ID token — never throws).
+- `api/push-on-post.js` (new): Vercel function, dependency-free REST — verifies the caller's
+  ID token, loads OPEN posts of the opposite kind with the same `itemKey` in the same market
+  (Firestore REST runQuery, zigzag-merge query — **no new composite index**), collects those
+  owners' `fcmTokens`, sends data-only webpush via **FCM HTTP v1** (service-account JWT →
+  Google access token, cached per warm instance), prunes tokens that answer
+  `UNREGISTERED`/`invalid`, caps fan-out (30 posts / 40 recipients). Bilingual alert copy,
+  poster excluded from recipients.
+- `marketStore.js`: posts now carry `itemKey` (= `itemLabel.toLowerCase()`) for matching.
+- `firestore.rules`: `posts.create` validates `itemKey`, new `fcmTokens` block
+  (own userId reads/deletes; create/update validate token 32–4096 chars, platform 'web').
+- `MarketPage.jsx`: 🔔 "Enable alerts" banner shown only while permission is 'default' (never
+  auto-asking on load); denied/unsupported states render a bilingual hint (incl. the iOS
+  install caveat); after a successful post the alert trigger fires silently; vendors who
+  already granted permission re-register their token on board visits.
+- `eslint.config.js`: `public/` added to ignores (service-worker globals).
+- `.env.example`: documents `VITE_FIREBASE_VAPID_KEY` (client, public) and
+  `FIREBASE_SERVICE_ACCOUNT_JSON` (Vercel, secret) + `VITE_PUSH_URL`.
+
+**User actions to light it up (blocking "done when"):**
+1. Firebase console → Project settings → **Service accounts** → *Generate new private key*
+   → keep the JSON. Then **Cloud Messaging → Web Push certificates** → *Generate key pair*
+   → copy the public key.
+2. Firebase console → Firestore → Rules → publish updated `firestore.rules` (adds
+   `fcmTokens`; `posts.create` now needs `itemKey` — **must publish before posting new
+   board items**, otherwise post creates fail validation).
+3. Local dev: add `VITE_FIREBASE_VAPID_KEY=<public key>` to `.env` and restart `npm run dev`.
+   Vercel: add `FIREBASE_SERVICE_ACCOUNT_JSON` (full JSON) + `FIREBASE_API_KEY`; keep
+   `VITE_FIREBASE_VAPID_KEY` in the client env; redeploy.
+4. Verify: (a) enable alerts on `/market` → a document lands in `fcmTokens` and a browser
+   test notification can be triggered; (b) post a `want` from account A while account B (same
+   market, with an open `offer` for the same item and alerts enabled, app backgrounded) —
+   B gets the notification within ~10 s with a working deep link; (c) with permission
+   denied, Chrome fails gracefully and the page shows the blocked hint instead.
+
 ---
 
 ## Phase 4 — Learning loop (make the promise true)

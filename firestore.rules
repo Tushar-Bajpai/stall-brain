@@ -55,6 +55,10 @@ service cloud.firestore {
         && request.resource.data.itemLabel is string
         && request.resource.data.itemLabel.size() > 0
         && request.resource.data.itemLabel.size() <= 80
+        // Phase 3: the matching key must be faithful to the label so push
+        // recipients can be found with exact equality queries.
+        && request.resource.data.itemKey is string
+        && request.resource.data.itemKey == request.resource.data.itemLabel.toLowerCase()
         && request.resource.data.contact is string
         && request.resource.data.contact.size() > 0
         && request.resource.data.contact.size() <= 20
@@ -66,6 +70,22 @@ service cloud.firestore {
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.marketSlug == resource.data.marketSlug
         && request.resource.data.status in ['open', 'matched', 'done'];
+    }
+
+    // Phase 3: FCM push tokens. Doc id encodes uid+token, but access is
+    // enforced by the userId field. The server-side sender (api/push-on-post)
+    // uses the service account and bypasses rules — these rules only govern
+    // the vendor's own browser.
+    match /fcmTokens/{tokenId} {
+      allow read, delete: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+
+      allow create, update: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.token is string
+        && request.resource.data.token.size() >= 32
+        && request.resource.data.token.size() <= 4096
+        && request.resource.data.platform in ['web'];
     }
 
     // Everything else: denied implicitly (no match = no access).

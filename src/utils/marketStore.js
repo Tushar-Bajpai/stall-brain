@@ -85,6 +85,9 @@ export async function upsertOwnPost({
     marketSlug: CURRENT_MARKET_SLUG,
     kind,
     itemLabel: trimmedItem,
+    // Normalized matching key (rules force it to equal itemLabel.toLowerCase()):
+    // push recipients are matched on this — case-insensitive by construction.
+    itemKey: trimmedItem.toLowerCase(),
     qty: Number.isFinite(safeQty) && safeQty > 0 ? safeQty : 0,
     unit: typeof unit === 'string' && unit.trim() ? unit.trim() : 'kg',
     price: Number.isFinite(safePrice) && safePrice > 0 ? safePrice : null,
