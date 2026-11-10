@@ -1,4 +1,4 @@
-// Groq forecast agent — Phase 0 rework.
+// Groq forecast agent — Phase 0 rework, Phase 1 proxy switch.
 // FIX-10: quantities are requested and validated as numbers (unit kept separate).
 // The LLM used to return "8 kg" free-tips and frequently failed arithmetic
 // (toBuy ≠ totalNeeded − alreadyHave). We now coerce every number and repair the
@@ -6,11 +6,13 @@
 // FIX-17: model is configurable via VITE_GROQ_MODEL (Groq retires models — e.g.
 // llama-3.3-70b-versatile → 404 — and only the model id changes).
 // FIX-18: every failure surfaces a distinct code (401 ≠ 404 ≠ 429 ≠ network).
-// FIX-2 (interim): if VITE_FORECAST_URL is set, requests go to that proxy
-// (e.g. the Firebase Callable Function behind a raw-URL adapter) and the
-// browser never attaches the key. In Phase 1 the client switches to
-// httpsCallable(functions, 'forecast') instead; once deployed, move
-// VITE_GROQ_API_KEY off the client permanently.
+// FIX-2 (Phase 1, free plan): when VITE_FORECAST_URL is set (deployed value:
+// "/api/forecast"), forecasts go to the Vercel proxy which holds GROQ_API_KEY
+// server-side; the browser authenticates with the user's Firebase ID token and
+// never needs the Groq key. Without the proxy (local dev), the legacy direct
+// call with VITE_GROQ_API_KEY keeps working.
+
+import { auth } from './firebase'
 
 const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions'
 const DEFAULT_MODEL = 'openai/gpt-oss-120b'
@@ -190,17 +192,35 @@ function resolveModels() {
   return [DEFAULT_MODEL, FALLBACK_MODEL]
 }
 
-async function callGroq(model, apiKey, userPrompt, signal) {
+async function callGroq(model, userPrompt) {
   const proxyUrl = import.meta.env.VITE_FORECAST_URL
   const headers = { 'Content-Type': 'application/json' }
-  if (!proxyUrl) {
+
+  if (proxyUrl) {
+    // Proxy path (production): the browser proves identity with its Firebase
+    // ID token; the Groq key lives server-side and is never sent or bundled.
+    const uid = auth?.currentUser
+    if (!uid) {
+      const error = new Error('MISSING_AUTH')
+      error.code = 'MISSING_AUTH'
+      throw error
+    }
+    const idToken = await uid.getIdToken()
+    headers.Authorization = `Bearer ${idToken}`
+  } else {
+    // Legacy direct path (local dev fallback): needs the client-side key.
+    const apiKey = import.meta.env.VITE_GROQ_API_KEY
+    if (!apiKey || apiKey === 'your_groq_key_here') {
+      const error = new Error('MISSING_API_KEY')
+      error.code = 'MISSING_API_KEY'
+      throw error
+    }
     headers.Authorization = `Bearer ${apiKey}`
   }
 
   const response = await fetch(proxyUrl || GROQ_ENDPOINT, {
     method: 'POST',
     headers,
-    signal,
     body: JSON.stringify({
       model,
       messages: [
@@ -251,15 +271,8 @@ export async function requestGroqForecast({
   eventMultiplier,
   demandMultiplier,
 }) {
-  const apiKey = import.meta.env.VITE_GROQ_API_KEY
-
-  if (!import.meta.env.VITE_FORECAST_URL) {
-    if (!apiKey || apiKey === 'your_groq_key_here') {
-      const error = new Error('MISSING_API_KEY')
-      error.code = 'MISSING_API_KEY'
-      throw error
-    }
-  }
+  // (No key handling here: callGroq() needs no key on the proxy path, and
+  // throws MISSING_API_KEY itself on the legacy direct dev path.)
 
   const finalItems = Array.isArray(items) && items.length ? items : stall.items
 
@@ -309,7 +322,7 @@ Use each item's stock unit for its numbers. Return precise procurement quantitie
 
   for (const model of models) {
     try {
-      const content = await callGroq(model, apiKey, userPrompt)
+      const content = await callGroq(model, userPrompt)
       const parsed = safeParseJson(content)
       const normalized = normalizeForecast(parsed, inventory)
       if (!normalized) {
