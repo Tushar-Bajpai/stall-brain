@@ -116,12 +116,12 @@ Your stall profile saves permanently. Each forecast lets you make temporary adju
 |---|---|
 | Frontend | React 19 + Vite |
 | Styling | Tailwind CSS v4 + CSS Variables |
-| Auth | Firebase (signup / login / session) |
+| Auth | Firebase Auth (email + password; Google ready) |
 | Routing | React Router v6 |
-| AI / LLM | Groq API — `openai/gpt-oss-120b` (configurable via `VITE_GROQ_MODEL`) |
+| AI / LLM | Groq API — `openai/gpt-oss-120b`, via the `/api/forecast` Vercel proxy (key server-side) |
 | Weather | Open-Meteo API (free, no key required) |
 | Icons | Lucide React |
-| Storage | Firebase (auth) + localStorage (forecast history, session) |
+| Storage | Firebase Auth + Firestore (server data) + localStorage (offline cache/fallback) |
 | Deployment | Vercel |
 
 Coding Agent used : Copilot with GPT Codex

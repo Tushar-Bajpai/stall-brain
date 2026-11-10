@@ -12,12 +12,13 @@
 ## 0. Guiding architecture
 
 ```
-React 19 + Vite PWA  ──►  Firebase (Auth, Firestore + Security Rules, Cloud Functions, FCM)
+React 19 + Vite SPA  ──►  Firebase (Auth, Firestore + Security Rules, FCM)
    │                              │
-   │ multiplier engine (local, offline-capable)          Callable Function 'forecast' → Groq API
-   │ Firestore SDK offline persistence = cache +          Firestore-trigger Function 'sendPushOnPost' → FCM
-   └ Free services only: Firebase Spark (free tier; Blaze plan required for Cloud Functions —
-     effectively $0 at this scale), Open-Meteo, FCM (free)
+   │ multiplier engine (local, offline-capable)          Vercel serverless function /api/forecast → Groq API
+   │ Firestore SDK offline persistence = cache +          Vercel function /api/push-on-post (Phase 3) → FCM
+   └ Free services only: Firebase Spark (free tier, NO Blaze), Open-Meteo, FCM, Vercel Hobby.
+     User decision (2026-11-10): the Blaze plan is NOT adopted — server-side helpers run on
+     Vercel serverless functions, not Firebase Cloud Functions (which require Blaze).
 ```
 
 Environment contract (Firebase web config is **not** a secret — it identifies the project;
@@ -27,9 +28,10 @@ service-account credentials — get bundled into the client):
 | Env var / credential | Where it lives |
 |---|---|
 | `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID` | client (safe by design) |
-| `GROQ_API_KEY` | Cloud Function only — set with `firebase functions:secrets:set GROQ_API_KEY` |
+| `GROQ_API_KEY` | Vercel env var only (read by `api/forecast.js`). Never a `VITE_` value in production |
+| `FIREBASE_API_KEY` | Vercel env var — the same web API key as `VITE_FIREBASE_API_KEY` (an identifier; used by the proxy to verify the caller's ID token) |
 | Web Push certificate key pair (VAPID) | generated in Firebase console (Cloud Messaging); public key → client as `vapidKey` for `getToken()`; private half stays in the console |
-| Firebase service-account / Admin SDK credentials | auto-injected on Cloud Functions runtime; local `serviceAccountKey.json` NEVER committed |
+| Firebase service-account / Admin credentials | Vercel env var only (used by the Phase-3 push function); NEVER committed to the repo |
 
 ---
 
@@ -38,15 +40,14 @@ service-account credentials — get bundled into the client):
 Goal: the existing app becomes correct and honest before anything is added.
 
 ### 0.1 Remove the client-exposed Groq key (FIX-2)
-- `src/utils/groqAgent.js:62` bundles `VITE_GROQ_API_KEY` into shipped JS.
-- Interim step inside Phase 0: create a Firebase Callable Function `forecast`
-  that wraps the existing prompt and returns the same `ForecastResult` JSON; keep the client
-  contract identical (same request shape, same response, same error codes). Requires the
-  Firebase project to be on the **Blaze plan** (Functions aren't available on Spark) — cost at
-  this scale is effectively $0; set a low budget alert anyway.
-- Full Firebase wiring is Phase 1, but this Callable Function must exist first because every
-  later phase depends on the proxy shape.
-- Delete `VITE_GROQ_API_KEY` from `.env` and from Vercel env vars.
+- `src/utils/groqAgent.js` bundles `VITE_GROQ_API_KEY` into shipped JS.
+- Interim-at-the-time step: a server-side proxy keeps the client contract identical (same
+  request shape, same response, same error codes). On the free plan (user decision
+  2026-11-10) this is the **Vercel serverless function `api/forecast.js`** — Firebase Cloud
+  Functions are unusable on Spark and the Blaze plan is not adopted.
+- Full wiring in Phase 1: client set `VITE_FORECAST_URL=/api/forecast`, Vercel holds
+  `GROQ_API_KEY` (+ `FIREBASE_API_KEY` for ID-token verification) as env vars.
+- Delete `VITE_GROQ_API_KEY` from production env (it remains as the local-dev fallback only).
 
 ### 0.2 Live event calendar (FIX-1)
 - `src/data/events.js` ends Dec 25, 2025 → multiplier is always 1 today.
@@ -147,12 +148,10 @@ Done:
   lazy state init / documented "adjust state on prop change" render pattern).
 
 Deferred (only the Groq-key piece of FIX-2):
-- The Groq key is still bundled client-side (`.env` → `VITE_GROQ_API_KEY`). The `functions/`
-  Callable Function scaffold (`functions/index.js` + `functions/package.json` + `firebase.json`)
-  is committed and deploy-ready; nothing Supabase-related remains in the repo. Once the
-  Firebase project is on Blaze: `firebase functions:secrets:set GROQ_API_KEY` +
-  `firebase deploy --only functions`, then Phase 1.3 switches the client to
-  `httpsCallable(functions, 'forecast')` and the key leaves the bundle — no other code changes.
+- The Groq key is still bundled client-side for local dev. The **Vercel proxy
+  `api/forecast.js` ships in Phase 1**: once it is deployed with `GROQ_API_KEY` + as Vercel
+  env vars and `VITE_FORECAST_URL=/api/forecast` is set (see Phase-1 status below), the key
+  leaves the bundle — `groqAgent.js` already prefers the proxy path automatically.
 - App bundle is 2,009 kB (minified, 416 kB gzip) — `date-holidays` pulls its full data index.
   Follow-up: dynamic-import the holidays year lazily or vendor only the UP rules.
 
@@ -164,7 +163,8 @@ Goal: one identity system, server-persisted per-user data, Function in productio
 
 > Already true in the repo: `src/utils/firebase.js` initializes the Firebase app and
 > `firebase/auth` powers signup/login/session. Phase 1 adds **Firestore** for per-user data and
-> moves the Groq call into a **Callable Function**. There is no Supabase anywhere in this plan.
+> moves the Groq call behind the **`/api/forecast` Vercel proxy**. There is no Supabase anywhere
+> in this plan.
 
 ### 1.1 Firestore data model & security rules (deny-by-default)
 
@@ -199,25 +199,57 @@ Each vendor sees only their own rows — enforced by the database (rules), not t
 ### 1.2 Auth migration
 - Firebase Auth: **email + password** is already live in the app; toggle on **Google sign-in**
   (free) and Email-link ("magic link") sign-in, which needs only Authorized-Domains config.
-- **No phone-OTP in this phase** — Firebase SMS requires the paid tier.
-- `LoginPage.jsx` / `SignupPage.jsx` / `App.jsx` (`onAuthStateChanged`) keep their Firebase
-  wiring; add password-reset and clear provider-error messaging where missing.
-- Migrate the `functions/` Callable Function `forecast` (scaffolded in Phase 0 as
-  `functions/index.js`) → deploy it with `firebase functions:secrets:set GROQ_API_KEY`,
-  `firebase deploy --only functions`. Requires the **Blaze plan** (Auth + Firestore stay free
-  otherwise).
+- **No phone-OTP in this phase** — SMS verification requires the paid tier on every provider.
+- Ship **`api/forecast.js`** on Vercel (free Hobby tier — no Blaze): set `GROQ_API_KEY` and
+  `FIREBASE_API_KEY` as Vercel env vars, set `VITE_FORECAST_URL=/api/forecast`, redeploy. The
+  proxy verifies the caller's Firebase ID token with the free Identity Toolkit endpoint and
+  forwards the body to Groq.
 
 ### 1.3 Wire-throughs
-- `profileStorage.js` → reads/writes the `profiles/{uid}` document via the Firestore SDK
-  (localStorage becomes a write-through cache).
+- `profileStorage.js` → keeps its localStorage contract; `cloudStore.js` mirrors the profile to
+  `profiles/{uid}` via the Firestore SDK (localStorage = offline write-through cache).
 - `ForecastPage` history → `profiles/{uid}/forecasts/{fdate}` (same-day uniqueness by doc id;
   regenerate = `set` with merge; feedback rides on the same doc).
-- `groqAgent.js` → replace the direct Groq call with `httpsCallable(functions, 'forecast')`:
-  the SDK attaches the user's ID token automatically; the function verifies it and rate-limits
-  per user (max ~20 forecasts/day).
+- `groqAgent.js` → production path is a fetch to `VITE_FORECAST_URL` (`/api/forecast`) with the
+  user's Firebase **ID token as Bearer** auth; the Vercel function verifies it and rate-limits
+  per user (best-effort ~20 forecasts/day). The direct-`VITE_GROQ_API_KEY` call remains ONLY as
+  a local-dev fallback.
 
 **Phase-1 done when:** signup/login/logout work; profile survives a second browser; forecast
-runs only through the Callable Function; history loads from Firestore with localStorage fallback.
+runs through the `/api/forecast` proxy in production; history loads from Firestore with
+localStorage fallback.
+
+### Phase-1 status (2026-11-10) — implemented in code, awaiting setup + verification
+
+Done:
+- `src/utils/firebase.js` exports `db` (Firestore) with on-device persistent cache
+  (`persistentLocalCache` + multi-tab manager) — groundwork for the Phase-5 offline PWA.
+- `firestore.rules` committed (deny-by-default): user-owned `profiles/{uid}` subtree, forecast
+  doc ids validated as `YYYY-MM-DD`, `dailyLogs` reserved for Phase 4, posts denied until Phase 2.
+- `src/utils/cloudStore.js`: `saveCloudProfile`/`loadCloudProfile`,
+  `saveCloudForecast` (doc id = date, merge-preserves first `createdAt`),
+  `updateCloudForecastFeedback`, `loadCloudHistory` (createdAt desc, limit 50).
+- `ProfilePage`: when the device has no cached profile, it restores from Firestore and warms
+  the local cache; every save also mirrors to Firestore (fire-and-forget — fallback path intact).
+- `ForecastPage`: restores history from Firestore when the local cache is empty; every forecast
+  upsert and feedback write also lands in Firestore; localStorage remains source-of-truth offline.
+- `api/forecast.js`: Vercel proxy — Bearer ID token verified via Google's free Identity Toolkit
+  endpoint, model allowlist (`GROQ_MODELS`), `max_tokens` clamp, best-effort per-user rate limit
+  (~20/day), Groq response passed through verbatim (client FIX-18 mapping unaffected).
+- `groqAgent.js`: proxy path preferred via `VITE_FORECAST_URL` (Bearer ID token, no key in the
+  bundle); direct Groq with `VITE_GROQ_API_KEY` is the local-dev fallback only.
+- `eslint.config.js`: `api/` excluded from the root browser lint config; the Phase-0 Blaze
+  scaffold (`functions/`, `firebase.json`) was removed.
+
+**User actions to light it up (blocking "done when"):**
+1. Firebase console → Firestore Database → **Create database** → paste `firestore.rules` →
+   Publish.
+2. Vercel → Project → Settings → Environment Variables: add `GROQ_API_KEY` (gsk_…),
+   `FIREBASE_API_KEY` (same value as `VITE_FIREBASE_API_KEY`), `VITE_FORECAST_URL=/api/forecast`;
+   remove `VITE_GROQ_API_KEY` from production environments.
+3. Redeploy → verify: (a) saving a profile creates `profiles/{uid}`; (b) a forecast creates
+   `profiles/{uid}/forecasts/<today>`; (c) logging in on a second browser restores profile +
+   history without localStorage; (d) the deployed JS bundle no longer contains `gsk_`.
 
 ---
 
@@ -283,12 +315,16 @@ Goal: "a neighbor just posted a need that matches your surplus" alerts.
   needed — sending happens through the Admin SDK.
 - Service worker `firebase-messaging-sw.js`: `onBackgroundMessage` → show notification with
   deep link to the post.
-- Cloud Function `sendPushOnPost` (Firestore trigger `onDocumentCreated('posts/{postId}')`):
-  loads the new post, finds profiles in the same market holding an open post of the opposite
-  matching kind, and calls Admin SDK `messaging.sendEachForDevice` for each of their tokens;
-  prune tokens that respond `messaging/registration-token-unregistered`.
-- Trigger is automatic (document-created) — more reliable than a "client calls the function
-  after insert" flow, and it doesn't have to trust the client.
+- Vercel function **`api/push-on-post.js`** (free plan; Spark has no Firestore-trigger Cloud
+  Functions): after a successful post create, the client calls it with its Firebase ID token.
+  The function (service-account credential as a Vercel secret, via the REST-friendly Admin SDK
+  pattern) loads profiles in the same market holding an open post of the opposite matching
+  kind and calls FCM HTTP v1 `messaging.sendEachForDevice` for their tokens; prune tokens that
+  respond `messaging/registration-token-unregistered`.
+- Documented trade-off of the free plan: the trigger is *client-called* rather than a
+  server-side document write, so a poster closing the tab mid-action skips that one alert.
+  Upgrade path: adopt a real `onDocumentCreated` trigger only if/when Blaze is ever adopted —
+  nothing else changes.
 - Permission UX: ask only after the user's first post or board visit (never on first load).
 - iOS note: Safari only supports Web Push in **installed PWA state** — until the offline-first
   PWA lands (Phase 5), iOS users can connect with the in-app approach nonetheless; surface an
@@ -350,7 +386,7 @@ npm i vite-plugin-pwa workbox-window        # add `dexie` only if §5.3 ever nee
 ### 5.3 Offline behavior
 - **Always compute multipliers locally first** (weather cache + events module) — this decouples
   the deterministic plan from the LLM (prerequisite refactor for offline).
-- Groq/Callable Function unreachable → render the deterministic plan in the same
+- Groq/`/api/forecast` unreachable → render the deterministic plan in the same
   `ForecastResult` shape: summary text as "Offline — approximate plan" (EN + HI).
 - Writes (profile edits, inventory, feedback, daily logs, market posts) go straight through the
   Firestore SDK, which persists them offline and replays on reconnect — no hand-rolled Dexie
@@ -399,9 +435,11 @@ there's real revenue or a funding reason to spend on per-message costs.
 2. **Everything user-facing is bilingual (English + Hindi).** Hindi must be natural Hinglish-
    friendly Devanagari, written for a low-literacy user; short sentences, no jargon. Never
    machine-translate inline at runtime — ship static copy.
-3. **Secrets server-side, always.** No new `VITE_`-prefixed secret handles. Groq goes only in
-   Cloud Functions (via `functions:secrets:set`). If a change adds any key to the client
-   bundle, stop and redesign.
+3. **Secrets server-side, always.** No new `VITE_`-prefixed secret handles in production.
+   `GROQ_API_KEY` lives in Vercel env vars (read by `api/forecast.js`); the Phase-3 service
+   account lives in Vercel env vars too. No Blaze plan is adopted (user decision 2026-11-10),
+   so there are no Firebase Cloud Functions. If a change adds any secret to the client bundle,
+   stop and redesign.
 4. **Follow existing code style:** Tailwind v4 with the project's `--color-*` CSS variables,
    functional components + hooks, no new UI library or state library unless a phase
    explicitly calls for one. Keep the deterministic multiplier engine as pure functions —
