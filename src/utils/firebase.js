@@ -1,5 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
+import {
+	getFirestore,
+	initializeFirestore,
+	persistentLocalCache,
+	persistentMultipleTabManager,
+} from "firebase/firestore";
 
 // FIX-16: fail loudly and helpfully when config is missing — a blank screen is
 // undebuggable for a new contributor. All keys must exist before init.
@@ -34,3 +40,20 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+
+// Phase 1: persistent local Firestore cache. This is offline-first groundwork:
+// reads/writes are served from IndexedDB when the network is down and replayed
+// on reconnect. The multi-tab manager keeps two tabs consistent. Only the
+// scheduled/unused "long-lived auto refresh" of Rules of SDK 10+ is omitted.
+let firestore;
+try {
+	firestore = initializeFirestore(app, {
+		localCache: persistentLocalCache({
+			tabManager: persistentMultipleTabManager(),
+		}),
+	});
+} catch {
+	firestore = getFirestore(app);
+}
+
+export const db = firestore;

@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Bazaar Brain Firestore security rules — Phase 1.
+// Deploy: paste this file's contents into Firebase console → Firestore Database
+// → Rules → Publish (no CLI needed). Keep deny-by-default: every path must be
+// explicitly allowed, everything else is rejected.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Per-vendor documents. Doc id = the Firebase Auth uid, so ownership is
+    // structural: a vendor can only reach their own subtree.
+    match /profiles/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      // One forecast per market day: doc id = "YYYY-MM-DD".
+      // Regenerate = set(..., {merge}); feedback rides on the same doc.
+      match /forecasts/{dateString} {
+        // Validate the doc id shape so only date keys exist here.
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid
+          && dateString.matches('^\\d{4}-\\d{2}-\\d{2}$');
+      }
+
+      // Learning-loop logs (Phase 4): one doc per item per day.
+      match /dailyLogs/{logId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    // Vendor network posts (Phase 2) are intentionally NOT allowed yet:
+    // uncommented when that phase ships — deny-all until then.
+    // match /posts/{postId} { ... }
+
+    // Everything else: denied implicitly (no match = no access).
+  }
+}

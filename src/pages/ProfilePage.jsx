@@ -11,6 +11,7 @@ import {
   saveProfile,
 } from '../utils/profileStorage'
 import { clearForecastSession } from '../utils/forecastSessionStore'
+import { saveCloudProfile, loadCloudProfile } from '../utils/cloudStore'
 import { auth } from '../utils/firebase'
 
 export default function ProfilePage() {
@@ -35,6 +36,27 @@ export default function ProfilePage() {
     const timer = setTimeout(() => setToast(''), 2800)
     return () => clearTimeout(timer)
   }, [toast])
+
+  // FIX-3/Phase 1: a second browser shows the vendor's saved profile from
+  // Firestore. Local cache wins when present (offline-safe); cloud is only
+  // fetched when this device has nothing stored.
+  useEffect(() => {
+    if (storedProfile) return
+    let active = true
+    loadCloudProfile()
+      .then((cloudProfile) => {
+        if (!active || !cloudProfile) return
+        setSelectedStallId(cloudProfile.stallType)
+        setItems(cloudProfile.ingredients)
+        saveProfile(cloudProfile) // warm the device cache (fallback path intact)
+      })
+      .catch(() => {
+        // Firestore unreachable (offline): stay on the empty-state flow.
+      })
+    return () => {
+      active = false
+    }
+  }, [storedProfile])
 
   const handleSelectStall = (stallId) => {
     const stall = stalls.find((entry) => entry.id === stallId)
@@ -95,6 +117,11 @@ export default function ProfilePage() {
       setError('Unable to save your profile. Please try again.')
       return
     }
+
+    // Phase 1: mirror the profile to Firestore (fire-and-forget — the
+    // localStorage copy above is committed and visible; server sync keeps
+    // working when the network returns via Firestore's own replay).
+    saveCloudProfile(saved).catch(() => {})
 
     setItems(saved.ingredients)
     setError('')

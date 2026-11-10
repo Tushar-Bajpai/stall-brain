@@ -17,6 +17,11 @@ import { getTodayInfo } from '../utils/dateTime'
 import { loadProfile } from '../utils/profileStorage'
 import { scopedKey } from '../utils/userScope'
 import {
+  loadCloudHistory,
+  saveCloudForecast,
+  updateCloudForecastFeedback,
+} from '../utils/cloudStore'
+import {
   createSessionFromProfile,
   INVENTORY_UNITS,
   loadForecastSession,
@@ -50,9 +55,15 @@ const ERROR_COPY = {
     action: 'Retry forecast',
   },
   GROQ_AUTH_FAILED: {
-    title: 'Groq key was rejected',
+    title: 'Sign-in could not be verified',
     message:
-      'The API key sent to Groq is invalid or revoked (401). Check VITE_GROQ_API_KEY in your .env file — it must start with gsk_ and match a key in your Groq dashboard.',
+      'The encrypted sign-in ticket that protects the forecast service was rejected (401/403). Log out, sign in again, and retry.',
+    action: 'Retry forecast',
+  },
+  MISSING_AUTH: {
+    title: 'Session expired',
+    message:
+      'Your sign-in session has ended, so the forecast service cannot verify you. Please sign in again and retry.',
     action: 'Retry forecast',
   },
   GROQ_MODEL_UNAVAILABLE: {
@@ -252,6 +263,25 @@ export default function ForecastPage() {
     }, 60 * 1000)
     return () => clearInterval(timer)
   }, [])
+
+  // FIX-3/Phase 1: localStorage is the offline cache, Firestore is the server
+  // truth. If this device has no cached history yet (e.g. a second browser),
+  // pull the vendor's saved runs from Firestore once.
+  useEffect(() => {
+    if (history.length > 0) return
+    let active = true
+    loadCloudHistory()
+      .then((cloudEntries) => {
+        if (!active || !cloudEntries?.length) return
+        setHistory((prev) => (prev.length > 0 ? prev : cloudEntries))
+      })
+      .catch(() => {
+        // Firestore unreachable (offline / first-sync): localStorage fallback.
+      })
+    return () => {
+      active = false
+    }
+  }, [history.length])
 
   useEffect(() => {
     // Persist the live "today" session whenever it changes.
@@ -499,6 +529,11 @@ export default function ForecastPage() {
         return next
       })
 
+      // Phase 1: persist the run to Firestore (doc id = the date ⇒ one per day).
+      // Fire-and-forget: the localStorage copy already made this visible; an
+      // offline/failed sync must not block or error the UI.
+      saveCloudForecast(newEntry).catch(() => {})
+
       saveDayCache(stall.id, dateInfo.dateString, {
         forecast: result,
         historyId: entryId,
@@ -529,6 +564,8 @@ export default function ForecastPage() {
         historyId: currentHistoryId,
         feedback: value,
       })
+      // Phase 1: ride the feedback onto the same-day Firestore doc.
+      updateCloudForecastFeedback(dateInfo.dateString, value).catch(() => {})
     }
   }
 
